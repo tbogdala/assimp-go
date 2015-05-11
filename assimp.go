@@ -110,7 +110,7 @@ import (
 	"fmt"
 	mgl "github.com/go-gl/mathgl/mgl32"
 	"unsafe"
-	"tbogdala/assimp/gombz"
+	"github.com/tbogdala/gombz"
 )
 
 // AssimpMatToGombzMat converts the row-major order of assimp
