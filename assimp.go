@@ -7,12 +7,8 @@ Package assimp implements a basic wrapper for the ASSIMP library: http://assimp.
 At present there's only a hard-coded, basic file loader that returns
 a basic MeshData slice.
 
-Auxillary functions to encode (and compress) and decode (and decompress) are
-also provided for convenience. This uses bson for data marshalling and zlib
-for data compression (on maximum strength setting).
 */
 package assimp
-
 
 /*
 #cgo CPPFLAGS: -I/MinGW/msys/1.0/include -std=c99
@@ -28,6 +24,16 @@ package assimp
 #include <assimp/cimport.h>
 #include <assimp/matrix4x4.h>
 #include <assimp/postprocess.h>
+
+struct aiAnimation* animation_at(struct aiScene* s, unsigned int index)
+{
+	return s->mAnimations[index];
+}
+
+char* animation_name(struct aiAnimation* a)
+{
+	return a->mName.data;
+}
 
 struct aiMesh* mesh_at(struct aiScene* s, unsigned int index)
 {
@@ -59,16 +65,22 @@ struct aiVector3D* mesh_uv_at(struct aiVector3D* uvChan, unsigned long index)
 	return &(uvChan[index]);
 }
 
+struct aiBone* mesh_bone_at(struct aiMesh* m, unsigned long index)
+{
+	struct aiBone* b =  m->mBones[index];
+	return b;
+}
+
 char* mesh_bone_name_at(struct aiMesh* m, unsigned long index)
 {
 	struct aiBone* b =  m->mBones[index];
 	return b->mName.data;
 }
 
-struct aiMatrix4x4* mesh_bone_offset(struct aiMesh* m, unsigned long index)
+struct aiVertexWeight* bone_vertex_weight_at(struct aiBone* b, unsigned long index)
 {
-	struct aiBone* b =  m->mBones[index];
-	return &b->mOffsetMatrix;
+	struct aiVertexWeight* w =  &b->mWeights[index];
+	return w;
 }
 
 struct face {
@@ -104,18 +116,40 @@ struct aiMatrix4x4* mesh_bone_transform(struct aiNode* root_node, struct aiMesh*
 	return &n->mTransformation;
 }
 
+struct aiMatrix4x4* mesh_bone_offset(struct aiMesh* m, unsigned long index)
+{
+	struct aiBone* b =  m->mBones[index];
+	return &b->mOffsetMatrix;
+}
+
+struct aiNodeAnim* animation_channel_at(struct aiAnimation* a, unsigned long index)
+{
+	struct aiNodeAnim* na =  a->mChannels[index];
+	return na;
+}
+
+char* channel_name(struct aiNodeAnim* a)
+{
+	return a->mNodeName.data;
+}
+
+char* node_name(struct aiNode* n) {
+  return n->mName.data;
+}
+
 */
 import "C"
 import (
 	"fmt"
-	mgl "github.com/go-gl/mathgl/mgl32"
 	"unsafe"
+
+	mgl "github.com/go-gl/mathgl/mgl32"
 	"github.com/tbogdala/gombz"
 )
 
-// AssimpMatToGombzMat converts the row-major order of assimp
+// MatToGombzMat converts the row-major order of assimp
 // to the column-major order of OpenGL
-func AssimpMatToGombzMat(src *C.struct_aiMatrix4x4, dest []float32) {
+func MatToGombzMat(src *C.struct_aiMatrix4x4, dest []float32) {
 	dest[0] = float32(src.a1)
 	dest[1] = float32(src.b1)
 	dest[2] = float32(src.c1)
@@ -144,6 +178,7 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 	///////////////////////////////////////////////////////////
 	// attempt to load the file
 	cModelFile := C.CString(modelFile)
+	defer C.free(unsafe.Pointer(cModelFile))
 
 	cScene := C.aiImportFile(cModelFile,
 		C.aiProcess_JoinIdenticalVertices|
@@ -160,6 +195,11 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 	// make sure that we got a scene back
 	if uintptr(unsafe.Pointer(cScene)) == 0 {
 		return nil, fmt.Errorf("Unable to load %s.\n", modelFile)
+	}
+
+	// make sure we have at least one mesh
+	if cScene.mNumMeshes < 1 {
+		return nil, fmt.Errorf("Unable to load %s -- no meshes were found!\n", modelFile)
 	}
 
 	// loop through each mesh
@@ -232,7 +272,7 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 			cUVChannel := C.mesh_uv_channel_at(cMesh, C.ulong(uvchi))
 			if uintptr(unsafe.Pointer(cUVChannel)) != 0 {
 				// if we have a valid UV channel, copy all of the UV's -- one per vert
-				outMesh.UVChannels[uvchi] = make ([]mgl.Vec2, outMesh.VertexCount)
+				outMesh.UVChannels[uvchi] = make([]mgl.Vec2, outMesh.VertexCount)
 				for vi := uint32(0); vi < outMesh.VertexCount; vi++ {
 					cUV := C.mesh_uv_at(cUVChannel, C.ulong(vi))
 					outMesh.UVChannels[uvchi][vi][0] = float32(cUV.x)
@@ -244,24 +284,108 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 		// copy the bones
 		if uintptr(unsafe.Pointer(cMesh.mBones)) != 0 {
 			outMesh.Bones = make([]gombz.Bone, cMesh.mNumBones)
-			for bi:= uint32(0); bi < outMesh.BoneCount; bi++ {
+			outMesh.VertexWeightIds = make([]mgl.Vec4, outMesh.VertexCount)
+			outMesh.VertexWeights = make([]mgl.Vec4, outMesh.VertexCount)
+
+			for bi := uint32(0); bi < outMesh.BoneCount; bi++ {
+				// setup basic bone properties
+				cBone := C.mesh_bone_at(cMesh, C.ulong(bi))
 				outMesh.Bones[bi].Id = int32(bi)
 				outMesh.Bones[bi].Name = C.GoString(C.mesh_bone_name_at(cMesh, C.ulong(bi)))
+				// fmt.Printf("\tBone #%d ; Weights=%d ; Name=%s\n", bi, cBone.mNumWeights, outMesh.Bones[bi].Name)
 
+				// copy over the offset matrix that transforms from mesh space to
+				// bone space in pose mode
 				cOffsetMat4x4 := C.mesh_bone_offset(cMesh, C.ulong(bi))
-				AssimpMatToGombzMat(cOffsetMat4x4, outMesh.Bones[bi].Offset[:])
+				MatToGombzMat(cOffsetMat4x4, outMesh.Bones[bi].Offset[:])
 
+				// copy over the transform matrix (relative to parent)
 				cTransformMat4x4 := C.mesh_bone_transform(cScene.mRootNode, cMesh, C.ulong(bi))
-				AssimpMatToGombzMat(cTransformMat4x4, outMesh.Bones[bi].Transform[:])
-			}
+				MatToGombzMat(cTransformMat4x4, outMesh.Bones[bi].Transform[:])
+
+				// copy over the vertex weights
+				for wi := C.uint(0); wi < cBone.mNumWeights; wi++ {
+					cWeight := C.bone_vertex_weight_at(cBone, C.ulong(wi))
+					//fmt.Printf("\t\tWeight %d ; vert=%d ; value=%f\n", wi, cWeight.mVertexId, cWeight.mWeight)
+
+					// get the curent weights for the vertex by id
+					tmpWeightVec := outMesh.VertexWeights[cWeight.mVertexId]
+
+					// see if there's an empty spot to set a weight
+					for twi := 0; twi < 4; twi++ {
+						if tmpWeightVec[twi] == 0.0 {
+							outMesh.VertexWeights[cWeight.mVertexId][twi] = float32(cWeight.mWeight)
+							outMesh.VertexWeightIds[cWeight.mVertexId][twi] = float32(bi)
+							break
+						}
+
+						// Note: DOES NOT RAISE AN ERROR IF 4 BONES ARE ALREADY ASSIGNED
+						if twi == 4 {
+							fmt.Printf("TOO MANY WEIGHTS: Weight %d ; vert=%d ; value=%f\n", wi, cWeight.mVertexId, cWeight.mWeight)
+						}
+					} // twi
+				} // wi
+			} // bi
 		}
 
-		// TODO: bone parent
-		// TODO: vertex weights
+		// now that all bones are copied over, time to set parent id's ...
+		for bi := uint32(0); bi < outMesh.BoneCount; bi++ {
+			bone := outMesh.Bones[bi]
+
+			// start with no parent
+			bone.Parent = -1
+
+			// find the scene node for the bone
+			cBoneName := C.CString(bone.Name)
+			cAssimpNode := C.find_assimp_node(cScene.mRootNode, cBoneName)
+			C.free(unsafe.Pointer(cBoneName))
+
+			if uintptr(unsafe.Pointer(cAssimpNode)) != 0 {
+				// get the scene node for the parent bone
+				cAssimpParentNode := cAssimpNode.mParent
+				if uintptr(unsafe.Pointer(cAssimpParentNode)) != 0 {
+					parentName := C.GoString(C.node_name(cAssimpParentNode))
+
+					// now loop through the bones again and find the id for the bone
+					// matching the parent bone name.
+					for pi := uint32(0); pi < outMesh.BoneCount; pi++ {
+						parentBone := outMesh.Bones[pi]
+						if parentName == parentBone.Name {
+							// we found the parent, so set the bone's parent id now.
+							bone.Parent = parentBone.Id
+							break
+						}
+					} // pi
+				}
+			}
+		} // bi
+
+		// TODO: animations fixup
+		fmt.Printf("Animations:\n")
+		if uintptr(unsafe.Pointer(cScene.mAnimations)) != 0 {
+			for aniIdx := C.uint(0); aniIdx < cScene.mNumAnimations; aniIdx++ {
+				cAni := C.animation_at(cScene, aniIdx)
+				aniName := C.GoString(C.animation_name(cAni))
+				fmt.Printf("\tAni #%d ; Name=%s ; Channel Count=%d\n", aniIdx, aniName, cAni.mNumChannels)
+				for aniChI := C.uint(0); aniChI < cAni.mNumChannels; aniChI++ {
+					cNodeAni := C.animation_channel_at(cAni, C.ulong(aniChI))
+					chName := C.GoString(C.channel_name(cNodeAni))
+					fmt.Printf("\t\tChannel %d; Name=%s\n", aniChI, chName)
+					fmt.Printf("\t\t\tPosKeys=%d, RotKeys=%d, ScaleKeys=%d\n",
+						cNodeAni.mNumPositionKeys,
+						cNodeAni.mNumRotationKeys,
+						cNodeAni.mNumScalingKeys)
+				}
+
+			}
+		}
 
 		// add the new mesh to the slice
 		outMeshes[i] = outMesh
 	}
+
+	// drop the scene now that we got our data
+	C.aiReleaseImport(cScene)
 
 	return outMeshes, nil
 }
