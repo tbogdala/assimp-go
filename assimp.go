@@ -133,8 +133,32 @@ char* channel_name(struct aiNodeAnim* a)
 	return a->mNodeName.data;
 }
 
+struct aiVectorKey* animation_channel_poskey_at(struct aiNodeAnim* chan, unsigned long index)
+{
+	struct aiVectorKey* vk = &chan->mPositionKeys[index];
+	return vk;
+}
+
+struct aiVectorKey* animation_channel_scalekey_at(struct aiNodeAnim* chan, unsigned long index)
+{
+	struct aiVectorKey* vk = &chan->mScalingKeys[index];
+	return vk;
+}
+
+struct aiQuatKey* animation_channel_rotkey_at(struct aiNodeAnim* chan, unsigned long index)
+{
+	struct aiQuatKey* qk = &chan->mRotationKeys[index];
+	return qk;
+}
+
+
 char* node_name(struct aiNode* n) {
   return n->mName.data;
+}
+
+struct aiMatrix4x4* scene_root_transform(struct aiScene* s)
+{
+	return &s->mRootNode->mTransformation;
 }
 
 */
@@ -360,24 +384,73 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 			}
 		} // bi
 
-		// TODO: animations fixup
-		fmt.Printf("Animations:\n")
+		// process all of the animations if they exist
 		if uintptr(unsafe.Pointer(cScene.mAnimations)) != 0 {
+			// create the Animations slice
+			outMesh.Animations = make([]gombz.Animation, cScene.mNumAnimations)
+
+			// loop through all of the animations
 			for aniIdx := C.uint(0); aniIdx < cScene.mNumAnimations; aniIdx++ {
 				cAni := C.animation_at(cScene, aniIdx)
-				aniName := C.GoString(C.animation_name(cAni))
-				fmt.Printf("\tAni #%d ; Name=%s ; Channel Count=%d\n", aniIdx, aniName, cAni.mNumChannels)
-				for aniChI := C.uint(0); aniChI < cAni.mNumChannels; aniChI++ {
-					cNodeAni := C.animation_channel_at(cAni, C.ulong(aniChI))
-					chName := C.GoString(C.channel_name(cNodeAni))
-					fmt.Printf("\t\tChannel %d; Name=%s\n", aniChI, chName)
-					fmt.Printf("\t\t\tPosKeys=%d, RotKeys=%d, ScaleKeys=%d\n",
-						cNodeAni.mNumPositionKeys,
-						cNodeAni.mNumRotationKeys,
-						cNodeAni.mNumScalingKeys)
-				}
+				animation := outMesh.Animations[aniIdx]
 
-			}
+				// setup the animation object
+				animation.Name = C.GoString(C.animation_name(cAni))
+				animation.Duration = float32(cAni.mDuration)
+				animation.TicksPerSecond = float32(cAni.mTicksPerSecond)
+
+				cRootMat4x4 := C.scene_root_transform(cScene)
+				MatToGombzMat(cRootMat4x4, animation.Transform[:])
+
+				//fmt.Printf("\tAnimation %d; Name=%s; Duration=%f; TPS=%f\n", aniIdx, animation.Name, animation.Duration, animation.TicksPerSecond)
+
+				// now setup all of the animation channels
+				//fmt.Printf("Animation: %s\n", animation.Name)
+				animation.Channels = make([]gombz.AnimationChannel, cAni.mNumChannels)
+				for aniChI := C.uint(0); aniChI < cAni.mNumChannels; aniChI++ {
+					aniChan := animation.Channels[aniChI]
+					cNodeAni := C.animation_channel_at(cAni, C.ulong(aniChI))
+
+					// set the channel name
+					aniChan.Name = C.GoString(C.channel_name(cNodeAni))
+
+					// create the slices for the keys
+					aniChan.PositionKeys = make([]gombz.AnimationVec3Key, cNodeAni.mNumPositionKeys)
+					aniChan.ScaleKeys = make([]gombz.AnimationVec3Key, cNodeAni.mNumScalingKeys)
+					aniChan.RotationKeys = make([]gombz.AnimationQuatKey, cNodeAni.mNumRotationKeys)
+
+					//fmt.Printf("\tChannel: %s = Pos(%d);Scale(%d);Rot(%d)\n", aniChan.Name, cNodeAni.mNumPositionKeys, cNodeAni.mNumScalingKeys, cNodeAni.mNumRotationKeys)
+
+					// copy over the position keys
+					for pki := C.uint(0); pki < cNodeAni.mNumPositionKeys; pki++ {
+						cPosKey := C.animation_channel_poskey_at(cNodeAni, C.ulong(pki))
+						aniChan.PositionKeys[pki].Time = float32(cPosKey.mTime)
+						aniChan.PositionKeys[pki].Key[0] = float32(cPosKey.mValue.x)
+						aniChan.PositionKeys[pki].Key[1] = float32(cPosKey.mValue.y)
+						aniChan.PositionKeys[pki].Key[2] = float32(cPosKey.mValue.z)
+					}
+
+					// copy over the scale keys
+					for ski := C.uint(0); ski < cNodeAni.mNumScalingKeys; ski++ {
+						cScaleKey := C.animation_channel_scalekey_at(cNodeAni, C.ulong(ski))
+						aniChan.ScaleKeys[ski].Time = float32(cScaleKey.mTime)
+						aniChan.ScaleKeys[ski].Key[0] = float32(cScaleKey.mValue.x)
+						aniChan.ScaleKeys[ski].Key[1] = float32(cScaleKey.mValue.y)
+						aniChan.ScaleKeys[ski].Key[2] = float32(cScaleKey.mValue.z)
+					}
+
+					// copy over the rotation keys
+					for rki := C.uint(0); rki < cNodeAni.mNumRotationKeys; rki++ {
+						cRotKey := C.animation_channel_rotkey_at(cNodeAni, C.ulong(rki))
+						aniChan.RotationKeys[rki].Time = float32(cRotKey.mTime)
+						aniChan.RotationKeys[rki].Key.W = float32(cRotKey.mValue.w)
+						aniChan.RotationKeys[rki].Key.V[0] = float32(cRotKey.mValue.x)
+						aniChan.RotationKeys[rki].Key.V[1] = float32(cRotKey.mValue.y)
+						aniChan.RotationKeys[rki].Key.V[2] = float32(cRotKey.mValue.z)
+					}
+				} // aniChI
+
+			} // aniIdx
 		}
 
 		// add the new mesh to the slice
