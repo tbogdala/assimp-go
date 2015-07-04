@@ -316,7 +316,7 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 				cBone := C.mesh_bone_at(cMesh, C.ulong(bi))
 				outMesh.Bones[bi].Id = int32(bi)
 				outMesh.Bones[bi].Name = C.GoString(C.mesh_bone_name_at(cMesh, C.ulong(bi)))
-				// fmt.Printf("\tBone #%d ; Weights=%d ; Name=%s\n", bi, cBone.mNumWeights, outMesh.Bones[bi].Name)
+				//fmt.Printf("\tBone #%d ; Weights=%d ; Name=%s\n", bi, cBone.mNumWeights, outMesh.Bones[bi].Name)
 
 				// copy over the offset matrix that transforms from mesh space to
 				// bone space in pose mode
@@ -326,6 +326,19 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 				// copy over the transform matrix (relative to parent)
 				cTransformMat4x4 := C.mesh_bone_transform(cScene.mRootNode, cMesh, C.ulong(bi))
 				MatToGombzMat(cTransformMat4x4, outMesh.Bones[bi].Transform[:])
+
+				/*
+					printMat := func(m mgl.Mat4) {
+						groggy.Logsf("DEBUG", "\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[0], m[4], m[8], m[12])
+						groggy.Logsf("DEBUG", "\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[1], m[5], m[9], m[13])
+						groggy.Logsf("DEBUG", "\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[2], m[6], m[10], m[14])
+						groggy.Logsf("DEBUG", "\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[3], m[7], m[11], m[15])
+					}
+					groggy.Logsf("DEBUG", "bone.Transform")
+					printMat(outMesh.Bones[bi].Transform)
+					groggy.Logsf("DEBUG", "bone.Offset")
+					printMat(outMesh.Bones[bi].Offset)
+				*/
 
 				// copy over the vertex weights
 				for wi := C.uint(0); wi < cBone.mNumWeights; wi++ {
@@ -354,7 +367,7 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 
 		// now that all bones are copied over, time to set parent id's ...
 		for bi := uint32(0); bi < outMesh.BoneCount; bi++ {
-			bone := outMesh.Bones[bi]
+			bone := &outMesh.Bones[bi]
 
 			// start with no parent
 			bone.Parent = -1
@@ -375,6 +388,7 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 					for pi := uint32(0); pi < outMesh.BoneCount; pi++ {
 						parentBone := outMesh.Bones[pi]
 						if parentName == parentBone.Name {
+							//fmt.Printf("Bone name == %s ; parent == %s ; parentid == %d\n", bone.Name, parentBone.Name, parentBone.Id)
 							// we found the parent, so set the bone's parent id now.
 							bone.Parent = parentBone.Id
 							break
@@ -392,34 +406,47 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 			// loop through all of the animations
 			for aniIdx := C.uint(0); aniIdx < cScene.mNumAnimations; aniIdx++ {
 				cAni := C.animation_at(cScene, aniIdx)
-				animation := outMesh.Animations[aniIdx]
+				animation := &outMesh.Animations[aniIdx]
 
 				// setup the animation object
 				animation.Name = C.GoString(C.animation_name(cAni))
 				animation.Duration = float32(cAni.mDuration)
 				animation.TicksPerSecond = float32(cAni.mTicksPerSecond)
 
+				// TODO: make this a rotation flag
+				// Note: this fixes an export problem from blender where the armature doesn't seem to respect
+				// the axis settings in the exporter.
+				x90Q := mgl.QuatRotate(mgl.DegToRad(90.0), mgl.Vec3{1.0, 0.0, 0.0})
+				x180Q := mgl.QuatRotate(mgl.DegToRad(180.0), mgl.Vec3{0.0, 1.0, 0.0})
+				x90QMat := x90Q.Mul(x180Q).Mat4()
+
 				cRootMat4x4 := C.scene_root_transform(cScene)
 				MatToGombzMat(cRootMat4x4, animation.Transform[:])
-
-				//fmt.Printf("\tAnimation %d; Name=%s; Duration=%f; TPS=%f\n", aniIdx, animation.Name, animation.Duration, animation.TicksPerSecond)
+				animation.Transform = animation.Transform.Inv().Mul4(x90QMat)
 
 				// now setup all of the animation channels
-				//fmt.Printf("Animation: %s\n", animation.Name)
 				animation.Channels = make([]gombz.AnimationChannel, cAni.mNumChannels)
 				for aniChI := C.uint(0); aniChI < cAni.mNumChannels; aniChI++ {
-					aniChan := animation.Channels[aniChI]
+					aniChan := &animation.Channels[aniChI]
 					cNodeAni := C.animation_channel_at(cAni, C.ulong(aniChI))
 
 					// set the channel name
 					aniChan.Name = C.GoString(C.channel_name(cNodeAni))
 
+					// try to find the bone with the same name to set the BoneId.
+					aniChan.BoneId = -1
+					for _, bone := range outMesh.Bones {
+						if bone.Name == aniChan.Name {
+							// we found a match, so set the BoneId.
+							aniChan.BoneId = bone.Id
+							break
+						}
+					}
+
 					// create the slices for the keys
 					aniChan.PositionKeys = make([]gombz.AnimationVec3Key, cNodeAni.mNumPositionKeys)
 					aniChan.ScaleKeys = make([]gombz.AnimationVec3Key, cNodeAni.mNumScalingKeys)
 					aniChan.RotationKeys = make([]gombz.AnimationQuatKey, cNodeAni.mNumRotationKeys)
-
-					//fmt.Printf("\tChannel: %s = Pos(%d);Scale(%d);Rot(%d)\n", aniChan.Name, cNodeAni.mNumPositionKeys, cNodeAni.mNumScalingKeys, cNodeAni.mNumRotationKeys)
 
 					// copy over the position keys
 					for pki := C.uint(0); pki < cNodeAni.mNumPositionKeys; pki++ {
