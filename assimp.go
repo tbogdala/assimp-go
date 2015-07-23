@@ -11,8 +11,8 @@ a basic MeshData slice.
 package assimp
 
 /*
-#cgo CPPFLAGS: -I/MinGW/msys/1.0/include -std=c99
-#cgo LDFLAGS: -L/MinGW/msys/1.0/lib -lassimp -lz -lstdc++
+#cgo CPPFLAGS: -I/mingw64/include -std=c99
+#cgo LDFLAGS: -L/mingw64/lib -lassimp -lz -lstdc++
 
 #include <stdio.h>
 #include <stdlib.h>
