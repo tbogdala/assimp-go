@@ -7,8 +7,7 @@ known as [assimp][assimp-link].
 UNDER CONSTRUCTION
 ==================
 
-The library is currently in an alpha state, but you are welcome to see how
-it's progressing.
+The library is currently in a usable state but may change to support more ASSIMP features.
 
 Requirements
 ------------
@@ -22,6 +21,17 @@ Software requirements:
 * [Mathgl][mgl] - for 3d math
 * [Gombz][gombz-link] - used as a file format and data structure for
   the information pulled from assimp.
+
+Usage
+-----
+
+The `compiler` submodule can be used to build a model compiler.
+
+```bash
+cd compiler
+go build
+./compiler -src example_model.obj
+```
 
 TODO
 ----

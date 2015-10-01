@@ -1,3 +1,5 @@
-compeditor
+compiler/*.exe
+compiler/compiler
+compiler/*.dll
 *.exe
 *.dll
