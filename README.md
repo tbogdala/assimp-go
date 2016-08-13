@@ -4,10 +4,6 @@ ASSIMP-GO
 This is a [Go][golang] library that wraps the use of the Open Asset Import Library
 known as [assimp][assimp-link].
 
-UNDER CONSTRUCTION
-==================
-
-The library is currently in a usable state but may change to support more ASSIMP features.
 
 Requirements
 ------------
@@ -25,23 +21,15 @@ Software requirements:
 Usage
 -----
 
-The `compiler` submodule can be used to build a model compiler.
+The module can be used to load files supported by [Assimp][assimp-link] and converts
+them into the [Gombz][gombz-link] meshes. Once imported, you can load an file
+(e.g. .OBJ or .FBX file) by using the following call:
 
-```bash
-cd compiler
-go build
-./compiler -src example_model.obj
+
+```
+srcMeshes, err := assimp.ParseFile(srcFilepath)
 ```
 
-TODO
-----
-
-The following need to be addressed in order to start releases:
-
-* documentation
-* api comments
-* samples
-* more data from assimp like animations
 
 
 LICENSE
