@@ -329,14 +329,14 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 
 				/*
 					printMat := func(m mgl.Mat4) {
-						groggy.Logsf("DEBUG", "\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[0], m[4], m[8], m[12])
-						groggy.Logsf("DEBUG", "\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[1], m[5], m[9], m[13])
-						groggy.Logsf("DEBUG", "\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[2], m[6], m[10], m[14])
-						groggy.Logsf("DEBUG", "\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[3], m[7], m[11], m[15])
+						fmt.Printf("\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[0], m[4], m[8], m[12])
+						fmt.Printf("\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[1], m[5], m[9], m[13])
+						fmt.Printf("\t%3.1f\t%3.1f\t%3.1f\t%3.1f", m[2], m[6], m[10], m[14])
+						fmt.Printf("\t%3.1f\t%3.1f\t%3.1f\t%3.1f\n", m[3], m[7], m[11], m[15])
 					}
-					groggy.Logsf("DEBUG", "bone.Transform")
+					fmt.Printf("Bone %s transform:\n", outMesh.Bones[bi].Name)
 					printMat(outMesh.Bones[bi].Transform)
-					groggy.Logsf("DEBUG", "bone.Offset")
+					fmt.Printf("Bone %s offset:\n", outMesh.Bones[bi].Name)
 					printMat(outMesh.Bones[bi].Offset)
 				*/
 
@@ -416,13 +416,13 @@ func ParseFile(modelFile string) (outMeshes []*gombz.Mesh, err error) {
 				// TODO: make this a rotation flag
 				// Note: this fixes an export problem from blender where the armature doesn't seem to respect
 				// the axis settings in the exporter.
-				x90Q := mgl.QuatRotate(mgl.DegToRad(90.0), mgl.Vec3{1.0, 0.0, 0.0})
-				x180Q := mgl.QuatRotate(mgl.DegToRad(180.0), mgl.Vec3{0.0, 1.0, 0.0})
-				x90QMat := x90Q.Mul(x180Q).Mat4()
+				//x90Q := mgl.QuatRotate(mgl.DegToRad(90.0), mgl.Vec3{1.0, 0.0, 0.0})
+				x180Q := mgl.QuatRotate(mgl.DegToRad(180.0), mgl.Vec3{0.0, 0.0, 1.0})
+				//x90QMat := x90Q.Mul(x180Q).Mat4()
 
 				cRootMat4x4 := C.scene_root_transform(cScene)
 				MatToGombzMat(cRootMat4x4, animation.Transform[:])
-				animation.Transform = animation.Transform.Inv().Mul4(x90QMat)
+				animation.Transform = animation.Transform.Inv().Mul4(x180Q.Mat4())
 
 				// now setup all of the animation channels
 				animation.Channels = make([]gombz.AnimationChannel, cAni.mNumChannels)
